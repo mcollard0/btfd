@@ -1,0 +1,46 @@
+# Database with sensitive API keys
+btfd/data/btfd.db
+btfd/data/*.db
+btfd/data/*.sqlite*
+
+# Python virtual environment
+venv/
+env/
+.venv/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs and temporary files
+*.log
+.DS_Store
+.env
+.env.local
+
+# Backups (keep structure but not content)
+backups/*.zip
+backups/*.tar.gz
+
+# Data files and caches  
+*.csv
+*.json
+*.pickle
+*.pkl
+data/cache/
+temp/
+
+# Email credentials (if stored locally)
+email_config.json
+smtp_credentials.txt
