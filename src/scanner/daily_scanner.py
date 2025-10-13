@@ -459,7 +459,7 @@ class DailySignalScanner:
                 <th>Options</th>
                 <th>Price</th>
                 <th>Strength</th>
-                <th>EMA</th>
+                <th>MA</th>
                 <th>RSI</th>
                 <th>RSI Context</th>
                 <th>Days Since Cross</th>
@@ -549,7 +549,7 @@ class DailySignalScanner:
                     html += f"""
                     <div style="margin: 20px 0; padding: 15px; border: 1px solid #ddd; border-radius: 5px; background-color: #f9f9f9;">
                         <h4 style="margin-top: 0; color: #007bff;">{symbol} - {signal['signal_type'].upper()} {signal['options_recommendation']} Signal</h4>
-                        <p><strong>Price:</strong> ${signal['current_price']:.2f} | <strong>EMA:</strong> ({signal['ema_fast']},{signal['ema_slow']}) | <strong>RSI:</strong> {signal['rsi_value']:.1f}</p>
+                        <p><strong>Price:</strong> ${signal['current_price']:.2f} | <strong>{'EMA' if 'ema_fast' in signal else 'SMA'}:</strong> ({signal.get('ema_fast') or signal.get('sma_fast')},{signal.get('ema_slow') or signal.get('sma_slow')}) | <strong>RSI:</strong> {signal['rsi_value']:.1f}</p>
                         <p><strong>Signal Strength:</strong> {detail_emoji} <span style="color: {detail_strength_color}; font-weight: bold; font-size: 18px;">{detail_strength_value}%</span> <em>({detail_desc})</em></p>
                         <img src="cid:{symbol}_chart" alt="{symbol} Technical Analysis Chart" style="max-width: 100%; height: auto; border: 1px solid #ccc; border-radius: 5px; margin: 10px 0; display: block;"/>
                         <p style="font-size: 12px; color: #666; text-align: center;"><em>Professional technical analysis chart showing 5 indicators: Price/EMA, Volume, RSI, MACD, CCI</em></p>

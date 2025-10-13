@@ -297,7 +297,7 @@ class DataManager:
             DataFrame with stock data or None if failed
         """
         
-        # Check cache first
+        # Check cache first (only if use_cache=True)
         if use_cache:
             cached_data = self._get_cached_data( symbol, start_date, end_date );
             if cached_data is not None and not cached_data.empty:
@@ -306,6 +306,8 @@ class DataManager:
                     return cached_data;
                 else:
                     print( f"📊 Cached data insufficient for {symbol} ({len(cached_data)}/{min_days} days), fetching more..." );
+        elif not use_cache:
+            print( f"📡 Forcing fresh download for {symbol} (cache disabled)" );
         
         # If insufficient data, automatically extend the date range
         extended_start = start_date;
