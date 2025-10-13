@@ -23,8 +23,6 @@ class StockDiscovery:
     
     def __init__( self ):
         self.config = get_config();
-        self.cache_file = Path( "data/discovered_stocks.json" );
-        self.cache_file.parent.mkdir( exist_ok=True );
         
     def get_nasdaq_listed_stocks( self ) -> List[Dict]:
         """
@@ -420,83 +418,26 @@ class StockDiscovery:
         print( f"✅ Found {len( affordable_stocks )} affordable stocks" );
         return affordable_stocks;
     
-    def cache_discovered_stocks( self, stocks: List[Dict] ):
-        """Cache discovered stocks with timestamp"""
-        
-        cache_data = {
-            'timestamp': datetime.now().isoformat(),
-            'date': date.today().isoformat(),
-            'total_stocks': len( stocks ),
-            'stocks': stocks
-        };
-        
-        with open( self.cache_file, 'w' ) as f:
-            json.dump( cache_data, f, indent=2 );
-        
-        print( f"💾 Cached {len( stocks )} stocks to {self.cache_file}" );
-    
-    def load_cached_stocks( self, max_age_hours: int = 24 ) -> Optional[List[Dict]]:
-        """Load cached stocks if fresh enough"""
-        
-        if not self.cache_file.exists():
-            return None;
-        
-        try:
-            with open( self.cache_file, 'r' ) as f:
-                cache_data = json.load( f );
-            
-            # Check age
-            cached_time = datetime.fromisoformat( cache_data['timestamp'] );
-            age_hours = ( datetime.now() - cached_time ).total_seconds() / 3600;
-            
-            if age_hours <= max_age_hours:
-                stocks = cache_data['stocks'];
-                print( f"💾 Using cached stocks ({len( stocks )} stocks, {age_hours:.1f}h old)" );
-                return stocks;
-            else:
-                print( f"⏰ Cache expired ({age_hours:.1f}h old > {max_age_hours}h)" );
-                return None;
-                
-        except Exception as e:
-            print( f"💥 Cache load error: {e}" );
-            return None;
     
     def discover_affordable_stocks( self, max_price: float = 100.0, 
                                    min_volume: int = 50000, 
                                    min_market_cap: int = 5000000,
-                                   use_cache: bool = True,
-                                   max_cache_age_hours: int = 24,
-                                   max_stocks_to_check: int = 100 ) -> List[str]:
+                                   max_stocks_to_check: int = 0 ) -> List[str]:
         """
-        Main method to discover affordable stocks
+        Main method to discover affordable stocks (in-memory only)
         
         Args:
             max_price: Maximum stock price
             min_volume: Minimum daily volume  
             min_market_cap: Minimum market cap
-            use_cache: Whether to use/create cache
-            max_cache_age_hours: Maximum cache age in hours
+            max_stocks_to_check: Maximum stocks to check (0 = no limit)
             
         Returns:
             List of affordable stock symbols
         """
-        print( f"🎯 Starting comprehensive stock discovery (< ${max_price})..." );
+        print( f"🎯 Starting comprehensive stock discovery (< ${max_price}, in-memory)..." );
         
         affordable_stocks = [];
-        
-        # Try cache first
-        if use_cache:
-            cached_stocks = self.load_cached_stocks( max_cache_age_hours );
-            if cached_stocks:
-                # Filter cached stocks by current criteria
-                affordable_stocks = [
-                    stock for stock in cached_stocks 
-                    if stock.get( 'current_price', 0 ) <= max_price
-                ];
-                
-                symbols = [stock['symbol'] for stock in affordable_stocks];
-                print( f"✅ Returning {len( symbols )} cached affordable stocks" );
-                return symbols;
         
         # Discover comprehensive stock list
         all_stocks = self.get_comprehensive_stock_list();
@@ -517,14 +458,10 @@ class StockDiscovery:
             all_stocks, max_price, min_volume, min_market_cap 
         );
         
-        # Cache results
-        if use_cache:
-            self.cache_discovered_stocks( affordable_stocks );
-        
-        # Return symbols
+        # Return symbols (in-memory only)
         symbols = [stock['symbol'] for stock in affordable_stocks if stock.get( 'symbol' )];
         
-        print( f"🎯 DISCOVERY COMPLETE: {len( symbols )} affordable stocks found!" );
+        print( f"🎯 DISCOVERY COMPLETE: {len( symbols )} affordable stocks found (in-memory)!" );
         return symbols;
 
 

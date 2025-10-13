@@ -13,7 +13,7 @@ class BTFDConfig:
     
     def __init__( self ):
         self.project_root = self._find_project_root();
-        self.db_path = self.project_root / "btfd" / "data" / "btfd.db";
+        self.db_path = self.project_root / "data" / "btfd.db";
         self._api_keys = {};
         self._load_api_keys();
     
@@ -21,7 +21,7 @@ class BTFDConfig:
         """Find the BTFD project root directory"""
         current = Path.cwd();
         while current != current.parent:
-            if ( current / "btfd" ).exists() and ( current / "src" ).exists():
+            if ( current / "src" ).exists() and ( current / "run_scanner.py" ).exists():
                 return current;
             current = current.parent;
         

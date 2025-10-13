@@ -100,8 +100,6 @@ def get_affordable_stocks( max_price=100.0, use_comprehensive=True ):
             max_price=max_price,
             min_volume=10000,   # Lower volume requirement for broader coverage
             min_market_cap=1000000,  # Lower $1M minimum market cap for broader coverage
-            use_cache=True,
-            max_cache_age_hours=24,  # Refresh daily for comprehensive coverage
             max_stocks_to_check=0  # NO LIMIT - check ALL stocks
         );
         
