@@ -83,11 +83,6 @@ class TechnicalConfig:
     EMA_FAST_MAX = 15;
     EMA_SLOW_MIN = 15;
     EMA_SLOW_MAX = 30;
-    
-    # SMA parameters for early golden/death cross detection
-    SMA_FAST = 49;  # "Early" version of SMA50
-    SMA_SLOW = 200; # Standard long-term SMA
-    SMA_LOOKBACK_DAYS = 14;  # Look for SMA crosses in last N days
 
 class StrategyConfig:
     """Trading strategy configuration"""

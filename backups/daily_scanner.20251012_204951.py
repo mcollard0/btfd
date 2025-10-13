@@ -61,37 +61,10 @@ class DailySignalScanner:
     
     def scan_stock_for_signals( self, symbol: str, lookback_days: int = 5 ) -> Optional[Dict]:
         """
-        Scan a single stock for EMA trading signals
+        Scan a single stock for trading signals
         
         Args:
             symbol: Stock symbol to scan
-            lookback_days: Days to look back for recent crossovers
-            
-        Returns:
-            Signal dictionary or None if no signal
-        """
-        return self._scan_stock_for_ma_signals( symbol, 'ema', lookback_days );
-    
-    def scan_stock_for_sma_signals( self, symbol: str, lookback_days: int = TechnicalConfig.SMA_LOOKBACK_DAYS ) -> Optional[Dict]:
-        """
-        Scan a single stock for SMA trading signals (49/200 cross)
-        
-        Args:
-            symbol: Stock symbol to scan
-            lookback_days: Days to look back for recent crossovers
-            
-        Returns:
-            Signal dictionary or None if no signal
-        """
-        return self._scan_stock_for_ma_signals( symbol, 'sma', lookback_days );
-    
-    def _scan_stock_for_ma_signals( self, symbol: str, ma_type: str, lookback_days: int ) -> Optional[Dict]:
-        """
-        Generalized moving average signal scanning
-        
-        Args:
-            symbol: Stock symbol to scan
-            ma_type: Type of moving average ('ema' or 'sma')
             lookback_days: Days to look back for recent crossovers
             
         Returns:
@@ -99,18 +72,14 @@ class DailySignalScanner:
         """
         
         # Get historical data (need extra days for technical indicators)
-        # Always load 300+ days to ensure sufficient data for SMA200 + buffer
-        history_days = 320;  # Ensure we have 200+ trading days (weekends/holidays excluded)
         end_date = date.today();
-        start_date = end_date - timedelta( days=history_days );
+        start_date = end_date - timedelta( days=60 );  # 60 days for indicators + signals
         
         try:
-            # Always require 210+ data points for proper SMA200 calculation
-            min_data_points = 210;
-            stock_data = self.data_manager.get_stock_data( symbol, start_date, end_date, min_days=min_data_points );
+            stock_data = self.data_manager.get_stock_data( symbol, start_date, end_date );
             
-            if stock_data is None or len( stock_data ) < min_data_points:
-                print( f"⚠️  Could not get sufficient data for {symbol} ({len(stock_data) if stock_data is not None else 0}/{min_data_points} days)" );
+            if stock_data is None or len( stock_data ) < 30:
+                print( f"⚠️  Insufficient data for {symbol}" );
                 return None;
             
             # Filter by price range ($10-$100)
@@ -119,27 +88,20 @@ class DailySignalScanner:
                 print( f"ℹ️  {symbol} price ${current_price:.2f} outside range ${StrategyConfig.PRICE_MIN}-${StrategyConfig.PRICE_MAX}" );
                 return None;
             
+            # Get optimized parameters for this symbol
+            params = self.get_optimized_parameters( symbol );
+            
             # Set date as index
             stock_data_indexed = stock_data.set_index( 'date' );
-            close_prices = stock_data_indexed['close'];
             
-            # Calculate moving averages based on type
-            if ma_type == 'ema':
-                # Get optimized parameters for EMA
-                params = self.get_optimized_parameters( symbol );
-                ma_fast = self.indicators.calculate_ema( close_prices, params['ema_fast'] );
-                ma_slow = self.indicators.calculate_ema( close_prices, params['ema_slow'] );
-                crossovers = self.indicators.detect_ema_crossovers( ma_fast, ma_slow, lookback_days );
-            else:  # sma
-                # Use fixed SMA parameters
-                ma_fast = self.indicators.calculate_sma( close_prices, TechnicalConfig.SMA_FAST );
-                ma_slow = self.indicators.calculate_sma( close_prices, TechnicalConfig.SMA_SLOW );
-                crossovers = self.indicators.detect_sma_crossovers( ma_fast, ma_slow, lookback_days );
-                params = {
-                    'sma_fast': TechnicalConfig.SMA_FAST,
-                    'sma_slow': TechnicalConfig.SMA_SLOW,
-                    'rsi_period': TechnicalConfig.RSI_PERIOD
-                };
+            # Calculate technical indicators
+            close_prices = stock_data_indexed['close'];
+            rsi = self.indicators.calculate_rsi( close_prices, params['rsi_period'] );
+            ema_fast = self.indicators.calculate_ema( close_prices, params['ema_fast'] );
+            ema_slow = self.indicators.calculate_ema( close_prices, params['ema_slow'] );
+            
+            # Check for recent EMA crossovers
+            crossovers = self.indicators.detect_ema_crossovers( ema_fast, ema_slow, lookback_days );
             
             if not crossovers:
                 return None;  # No recent crossovers
@@ -147,40 +109,31 @@ class DailySignalScanner:
             # Get most recent crossover
             latest_crossover = crossovers[-1];
             
-            # Calculate RSI for context
-            rsi = self.indicators.calculate_rsi( close_prices, TechnicalConfig.RSI_PERIOD );
+            # Get RSI context
             current_rsi = rsi.dropna().iloc[-1] if not rsi.dropna().empty else 50;
             rsi_crosses = self.indicators.detect_rsi_crosses( rsi, TechnicalConfig.RSI_LOOKBACK_DAYS );
             
             # Calculate signal strength
             signal_strength = self._calculate_signal_strength(
                 latest_crossover['type'], current_rsi, rsi_crosses,
-                current_price, params, ma_type
+                current_price, params
             );
             
             # Determine options recommendation
             options_recommendation = 'CALL' if latest_crossover['type'] == 'bullish' else 'PUT';
             
-            # Add confidence level based on signal type and RSI context
-            confidence_suffix = "";
-            if ma_type == 'sma':
-                # SMA signals are longer-term, different context
-                if latest_crossover['type'] == 'bullish':
-                    confidence_suffix = " (Golden Cross - early warning)" if current_rsi < 50 else " (Golden Cross)";
-                else:
-                    confidence_suffix = " (Death Cross - early warning)" if current_rsi > 50 else " (Death Cross)";
-            else:
-                # Original EMA context logic
-                if latest_crossover['type'] == 'bullish':
-                    if current_rsi < 40:
-                        confidence_suffix = " (RSI oversold - strong CALL setup)";
-                    elif current_rsi > 70:
-                        confidence_suffix = " (RSI overbought - weaker CALL)";
-                else:  # bearish
-                    if current_rsi > 60:
-                        confidence_suffix = " (RSI overbought - strong PUT setup)";
-                    elif current_rsi < 30:
-                        confidence_suffix = " (RSI oversold - weaker PUT)";
+            # Add confidence level based on RSI context
+            rsi_confirmation = "";
+            if latest_crossover['type'] == 'bullish':
+                if current_rsi < 40:
+                    rsi_confirmation = " (RSI oversold - strong CALL setup)";
+                elif current_rsi > 70:
+                    rsi_confirmation = " (RSI overbought - weaker CALL)";
+            else:  # bearish
+                if current_rsi > 60:
+                    rsi_confirmation = " (RSI overbought - strong PUT setup)";
+                elif current_rsi < 30:
+                    rsi_confirmation = " (RSI oversold - weaker PUT)";
             
             # Create signal record
             signal = {
@@ -190,8 +143,11 @@ class DailySignalScanner:
                 'signal_date': latest_crossover['date'],
                 'current_price': current_price,
                 'options_recommendation': options_recommendation,
-                'options_confidence': confidence_suffix,
-                'signal_source': ma_type.upper(),  # EMA or SMA
+                'options_confidence': rsi_confirmation,
+                'ema_fast': params['ema_fast'],
+                'ema_slow': params['ema_slow'],
+                'ema_fast_value': latest_crossover['fast_ema'],
+                'ema_slow_value': latest_crossover['slow_ema'],
                 'rsi_value': current_rsi,
                 'rsi_overbought_cross': rsi_crosses.get( 'overbought_cross' ),
                 'rsi_oversold_cross': rsi_crosses.get( 'oversold_cross' ),
@@ -199,31 +155,15 @@ class DailySignalScanner:
                 'days_since_cross': ( date.today() - latest_crossover['date'] ).days
             };
             
-            # Add MA-specific fields
-            if ma_type == 'ema':
-                signal.update({
-                    'ema_fast': params['ema_fast'],
-                    'ema_slow': params['ema_slow'],
-                    'ema_fast_value': latest_crossover.get( 'fast_ema' ),
-                    'ema_slow_value': latest_crossover.get( 'slow_ema' )
-                });
-            else:
-                signal.update({
-                    'sma_fast': params['sma_fast'],
-                    'sma_slow': params['sma_slow'],
-                    'sma_fast_value': latest_crossover.get( 'fast_sma' ),
-                    'sma_slow_value': latest_crossover.get( 'slow_sma' )
-                });
-            
             return signal;
             
         except Exception as e:
-            print( f"❌ Error scanning {symbol} for {ma_type.upper()} signals: {e}" );
+            print( f"❌ Error scanning {symbol}: {e}" );
             return None;
     
     def _calculate_signal_strength( self, signal_type: str, current_rsi: float, 
                                    rsi_crosses: Dict, current_price: float, 
-                                   params: Dict, ma_type: str = 'ema' ) -> float:
+                                   params: Dict ) -> float:
         """
         Calculate signal strength score (0-100)
         
@@ -232,8 +172,7 @@ class DailySignalScanner:
             current_rsi: Current RSI value
             rsi_crosses: RSI cross information
             current_price: Current stock price
-            params: MA parameters used
-            ma_type: Type of moving average ('ema' or 'sma')
+            params: EMA parameters used
             
         Returns:
             Signal strength score (0-100)
@@ -272,65 +211,22 @@ class DailySignalScanner:
         price_score = 1.0 - abs( current_price - 55 ) / 45;  # Normalized around $55 midpoint
         strength += price_score * 5;  # Up to 5 points for good price
         
-        # Parameter confidence based on MA type
-        if ma_type == 'ema':
-            # Tighter EMAs might be more responsive
-            ema_gap = params.get( 'ema_slow', 20 ) - params.get( 'ema_fast', 10 );
-            if ema_gap <= 10:
-                strength += 3;  # Bonus for responsive parameters
-        else:  # sma
-            # SMA signals are longer-term, different scoring
-            # SMA 49/200 cross is significant, boost base strength
-            strength += 10;  # SMA crossovers are rarer, more significant
-            
-            # For SMA signals, RSI context is less critical but still useful
-            if signal_type == 'bullish' and current_rsi > 50:
-                strength += 5;  # Bullish momentum confirmation
-            elif signal_type == 'bearish' and current_rsi < 50:
-                strength += 5;  # Bearish momentum confirmation
+        # Parameter confidence (tighter EMAs might be more responsive)
+        ema_gap = params['ema_slow'] - params['ema_fast'];
+        if ema_gap <= 10:
+            strength += 3;  # Bonus for responsive parameters
         
         # Ensure strength stays in 0-100 range
         return max( 0, min( 100, strength ) );
     
     def scan_multiple_stocks( self, symbols: List[str] = None, 
-                            max_signals: int = 20, include_sma: bool = True ) -> List[Dict]:
+                            max_signals: int = 20 ) -> List[Dict]:
         """
-        Scan multiple stocks for signals (EMA + SMA by default)
+        Scan multiple stocks for signals
         
         Args:
             symbols: List of symbols to scan, or None for auto-generated list
             max_signals: Maximum number of signals to return
-            include_sma: Whether to also scan for SMA signals (default True)
-            
-        Returns:
-            List of signal dictionaries, sorted by strength
-        """
-        return self._scan_multiple_stocks_for_ma( symbols, max_signals, 'ema', include_sma );
-    
-    def scan_multiple_stocks_sma_only( self, symbols: List[str] = None,
-                                      max_signals: int = 20 ) -> List[Dict]:
-        """
-        Scan multiple stocks for SMA signals only
-        
-        Args:
-            symbols: List of symbols to scan, or None for auto-generated list
-            max_signals: Maximum number of signals to return
-            
-        Returns:
-            List of SMA signal dictionaries, sorted by strength
-        """
-        return self._scan_multiple_stocks_for_ma( symbols, max_signals, 'sma', False );
-        
-    def _scan_multiple_stocks_for_ma( self, symbols: List[str], max_signals: int, 
-                                     primary_ma_type: str, include_secondary: bool ) -> List[Dict]:
-        """
-        Scan multiple stocks for moving average signals
-        
-        Args:
-            symbols: List of symbols to scan
-            max_signals: Maximum signals to return
-            primary_ma_type: Primary MA type ('ema' or 'sma')
-            include_secondary: Whether to also scan for secondary MA type
             
         Returns:
             List of signal dictionaries, sorted by strength
@@ -346,35 +242,14 @@ class DailySignalScanner:
         signals = [];
         
         for i, symbol in enumerate( symbols ):
-            print( f"🔍 [{i+1}/{len( symbols )}] Scanning {symbol} for {primary_ma_type.upper()} signals..." );
+            print( f"🔍 [{i+1}/{len( symbols )}] Scanning {symbol}..." );
             
-            # Scan for primary MA type
-            if primary_ma_type == 'ema':
-                signal = self.scan_stock_for_signals( symbol );
-            else:
-                signal = self.scan_stock_for_sma_signals( symbol );
-                
+            signal = self.scan_stock_for_signals( symbol );
             if signal:
                 signals.append( signal );
-                print( f"   ✅ {signal['signal_type'].upper()} {primary_ma_type.upper()} signal - Strength: {signal['signal_strength']:.1f}" );
-                
-            # Optionally scan for secondary MA type
-            if include_secondary:
-                secondary_ma_type = 'sma' if primary_ma_type == 'ema' else 'ema';
-                print( f"   🔍 Also checking {secondary_ma_type.upper()} signals for {symbol}..." );
-                
-                if secondary_ma_type == 'ema':
-                    secondary_signal = self.scan_stock_for_signals( symbol );
-                else:
-                    secondary_signal = self.scan_stock_for_sma_signals( symbol );
-                    
-                if secondary_signal:
-                    signals.append( secondary_signal );
-                    print( f"   ✅ {secondary_signal['signal_type'].upper()} {secondary_ma_type.upper()} signal - Strength: {secondary_signal['signal_strength']:.1f}" );
-            
-            # Print "no signal" message only if no signals found
-            if not signal and not (include_secondary and 'secondary_signal' in locals() and secondary_signal):
-                print( f"   ℹ️  No signals" );
+                print( f"   ✅ {signal['signal_type'].upper()} signal - Strength: {signal['signal_strength']:.1f}" );
+            else:
+                print( f"   ℹ️  No signal" );
         
         # Sort by signal strength (strongest first)
         signals.sort( key=lambda x: x['signal_strength'], reverse=True );
@@ -402,10 +277,6 @@ class DailySignalScanner:
             cursor = conn.cursor();
             
             for signal in signals:
-                # Handle both EMA and SMA signals
-                ema_fast = signal.get('ema_fast') or signal.get('sma_fast', 0);
-                ema_slow = signal.get('ema_slow') or signal.get('sma_slow', 0);
-                
                 cursor.execute(
                     """INSERT OR REPLACE INTO daily_signals 
                        (date, symbol, signal_type, ema_fast, ema_slow, rsi_value, rsi_cross_date, price, strength_score)
@@ -414,8 +285,8 @@ class DailySignalScanner:
                         signal['scan_date'],
                         signal['symbol'],
                         signal['signal_type'],
-                        ema_fast,
-                        ema_slow,
+                        signal['ema_fast'],
+                        signal['ema_slow'],
                         signal['rsi_value'],
                         signal.get( 'rsi_oversold_cross' ) or signal.get( 'rsi_overbought_cross' ),
                         signal['current_price'],
@@ -510,7 +381,7 @@ class DailySignalScanner:
                     {strength_emoji} <strong style="color: {strength_color};">{strength_value}%</strong><br/>
                     <small>{strength_desc}</small>
                 </td>
-                <td>{'EMA(' + str(signal.get('ema_fast', 'N/A')) + ',' + str(signal.get('ema_slow', 'N/A')) + ')' if 'ema_fast' in signal else 'SMA(' + str(signal.get('sma_fast', 'N/A')) + ',' + str(signal.get('sma_slow', 'N/A')) + ')'}</td>
+                <td>EMA({signal['ema_fast']},{signal['ema_slow']})</td>
                 <td>{signal['rsi_value']:.1f}</td>
                 <td>{rsi_context}</td>
                 <td>{signal['days_since_cross']}</td>

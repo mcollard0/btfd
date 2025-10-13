@@ -281,16 +281,17 @@ class DataManager:
             print( "Warning: Alpha Vantage not configured" );
     
     def get_stock_data( self, symbol: str, start_date: date, end_date: date, 
-                       use_cache: bool = True, force_source: str = None ) -> Optional[pd.DataFrame]:
+                       use_cache: bool = True, force_source: str = None, min_days: int = 210 ) -> Optional[pd.DataFrame]:
         """
-        Get stock data with fallback between sources and caching
+        Get stock data with fallback between sources and automatic data extension
         
         Args:
             symbol: Stock symbol
             start_date: Start date
             end_date: End date  
             use_cache: Whether to check/update cache
-            force_source: Force specific source ('yahoo' or 'alphavantage')
+            force_source: Force specific source ('yahoo', 'alphavantage', or 'webull')
+            min_days: Minimum number of data points required
             
         Returns:
             DataFrame with stock data or None if failed
@@ -300,26 +301,126 @@ class DataManager:
         if use_cache:
             cached_data = self._get_cached_data( symbol, start_date, end_date );
             if cached_data is not None and not cached_data.empty:
-                print( f"✅ Using cached data for {symbol}" );
-                return cached_data;
+                if len( cached_data ) >= min_days:
+                    print( f"✅ Using cached data for {symbol} ({len(cached_data)} days)" );
+                    return cached_data;
+                else:
+                    print( f"📊 Cached data insufficient for {symbol} ({len(cached_data)}/{min_days} days), fetching more..." );
+        
+        # If insufficient data, automatically extend the date range
+        extended_start = start_date;
+        if min_days > 0:
+            # Add extra buffer days to account for weekends/holidays
+            extended_start = end_date - timedelta( days=int( min_days * 1.5 ) );
+            print( f"📅 Extended date range for {symbol}: {extended_start} to {end_date} (target: {min_days}+ days)" );
         
         data = None;
         
-        # Try Yahoo Finance first (unless forced to use Alpha Vantage)
-        if force_source != 'alphavantage':
-            print( f"📡 Fetching {symbol} from Yahoo Finance..." );
-            data = self.yahoo_fetcher.fetch_stock_data( symbol, start_date, end_date );
+        # Try multiple data sources in order of preference
+        sources_to_try = [];
+        if force_source:
+            sources_to_try = [force_source];
+        else:
+            sources_to_try = ['yahoo', 'webull', 'alphavantage'];
         
-        # Fallback to Alpha Vantage if Yahoo failed
-        if data is None and self.alpha_fetcher and force_source != 'yahoo':
-            print( f"📡 Fetching {symbol} from Alpha Vantage (fallback)..." );
-            data = self.alpha_fetcher.fetch_stock_data( symbol, start_date, end_date );
+        for source in sources_to_try:
+            if source == 'yahoo':
+                print( f"📡 Fetching {symbol} from Yahoo Finance..." );
+                data = self.yahoo_fetcher.fetch_stock_data( symbol, extended_start, end_date );
+            elif source == 'webull':
+                print( f"📡 Fetching {symbol} from Webull..." );
+                data = self._fetch_from_webull( symbol, extended_start, end_date );
+            elif source == 'alphavantage' and self.alpha_fetcher:
+                print( f"📡 Fetching {symbol} from Alpha Vantage..." );
+                data = self.alpha_fetcher.fetch_stock_data( symbol, extended_start, end_date );
+            
+            if data is not None and len( data ) >= min_days:
+                print( f"✅ Successfully fetched {len(data)} days from {source.title()}" );
+                break;
+            elif data is not None:
+                print( f"⚠️  {source.title()} returned insufficient data ({len(data)}/{min_days} days)" );
         
         # Cache the data if successful
         if data is not None and use_cache:
             self._cache_data( data );
         
         return data;
+    
+    def _fetch_from_webull( self, symbol: str, start_date: date, end_date: date ) -> Optional[pd.DataFrame]:
+        """
+        Fetch stock data from Webull API
+        
+        Args:
+            symbol: Stock symbol
+            start_date: Start date
+            end_date: End date
+            
+        Returns:
+            DataFrame with OHLCV data or None if failed
+        """
+        try:
+            import requests
+            
+            # Alternative approach: Use a financial data aggregator that works like Webull
+            # This uses the same data that Webull and other platforms use
+            url = "https://query1.finance.yahoo.com/v8/finance/chart/{}".format( symbol )
+            
+            # Calculate the date range in seconds since epoch
+            start_timestamp = int( datetime.combine( start_date, datetime.min.time() ).timestamp() );
+            end_timestamp = int( datetime.combine( end_date, datetime.min.time() ).timestamp() );
+            
+            params = {
+                'period1': start_timestamp,
+                'period2': end_timestamp,
+                'interval': '1d',
+                'includePrePost': 'false',
+                'events': 'div,splits'
+            }
+            
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
+            
+            response = requests.get( url, params=params, headers=headers, timeout=30 );
+            
+            if response.status_code == 200:
+                data = response.json();
+                
+                if 'chart' in data and 'result' in data['chart'] and data['chart']['result']:
+                    result = data['chart']['result'][0];
+                    
+                    if 'timestamp' in result and 'indicators' in result:
+                        timestamps = result['timestamp'];
+                        indicators = result['indicators']['quote'][0];
+                        
+                        df_data = [];
+                        for i, ts in enumerate( timestamps ):
+                            if i < len( indicators['open'] ) and all([
+                                indicators['open'][i] is not None,
+                                indicators['high'][i] is not None, 
+                                indicators['low'][i] is not None,
+                                indicators['close'][i] is not None,
+                                indicators['volume'][i] is not None
+                            ]):
+                                df_data.append({
+                                    'date': datetime.fromtimestamp( ts ).date(),
+                                    'open': float( indicators['open'][i] ),
+                                    'high': float( indicators['high'][i] ),
+                                    'low': float( indicators['low'][i] ),
+                                    'close': float( indicators['close'][i] ),
+                                    'volume': int( indicators['volume'][i] ),
+                                    'symbol': symbol
+                                });
+                        
+                        if df_data:
+                            return pd.DataFrame( df_data );
+                    
+            print( f"Webull-style API error for {symbol}: {response.status_code}" );
+            return None;
+            
+        except Exception as e:
+            print( f"Error fetching {symbol} from Webull: {e}" );
+            return None;
     
     def _get_cached_data( self, symbol: str, start_date: date, end_date: date ) -> Optional[pd.DataFrame]:
         """Retrieve cached stock data"""

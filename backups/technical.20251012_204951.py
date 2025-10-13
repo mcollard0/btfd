@@ -54,24 +54,6 @@ class TechnicalIndicators:
         ema_values = talib.EMA( prices.values, timeperiod=period );
         return pd.Series( ema_values, index=prices.index );
     
-    def calculate_sma( self, prices: pd.Series, period: int ) -> pd.Series:
-        """
-        Calculate SMA (Simple Moving Average)
-        
-        Args:
-            prices: Series of closing prices
-            period: SMA period
-            
-        Returns:
-            Series of SMA values
-        """
-        if len( prices ) < period:
-            return pd.Series( [np.nan] * len( prices ), index=prices.index );
-        
-        # Use TA-Lib for SMA calculation
-        sma_values = talib.SMA( prices.values, timeperiod=period );
-        return pd.Series( sma_values, index=prices.index );
-    
     def calculate_macd( self, prices: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9 ) -> Dict[str, pd.Series]:
         """
         Calculate MACD (Moving Average Convergence Divergence)
@@ -170,43 +152,14 @@ class TechnicalIndicators:
         Returns:
             List of crossover events with date, type, and values
         """
-        return self._detect_ma_crossovers( fast_ema, slow_ema, lookback_days, 'ema' );
-    
-    def detect_sma_crossovers( self, fast_sma: pd.Series, slow_sma: pd.Series, lookback_days: int = 14 ) -> List[Dict]:
-        """
-        Detect SMA crossovers in recent data
-        
-        Args:
-            fast_sma: Fast SMA series
-            slow_sma: Slow SMA series
-            lookback_days: Days to check for crossovers
-            
-        Returns:
-            List of crossover events with date, type, and values
-        """
-        return self._detect_ma_crossovers( fast_sma, slow_sma, lookback_days, 'sma' );
-        
-    def _detect_ma_crossovers( self, fast_ma: pd.Series, slow_ma: pd.Series, lookback_days: int, ma_type: str ) -> List[Dict]:
-        """
-        Generic moving average crossover detection
-        
-        Args:
-            fast_ma: Fast moving average series
-            slow_ma: Slow moving average series
-            lookback_days: Days to check for crossovers
-            ma_type: Type of MA ('ema' or 'sma')
-            
-        Returns:
-            List of crossover events with date, type, and values
-        """
         crossovers = [];
         
-        if len( fast_ma ) < 2 or len( slow_ma ) < 2:
+        if len( fast_ema ) < 2 or len( slow_ema ) < 2:
             return crossovers;
         
         # Align series and get recent data
-        aligned_fast = fast_ma.tail( lookback_days + 1 );
-        aligned_slow = slow_ma.tail( lookback_days + 1 );
+        aligned_fast = fast_ema.tail( lookback_days + 1 );
+        aligned_slow = slow_ema.tail( lookback_days + 1 );
         
         for i in range( 1, len( aligned_fast ) ):
             prev_fast = aligned_fast.iloc[i-1];
@@ -220,33 +173,21 @@ class TechnicalIndicators:
             
             # Bullish crossover: fast crosses above slow
             if prev_fast <= prev_slow and curr_fast > curr_slow:
-                crossover_data = {
+                crossovers.append({
                     'date': aligned_fast.index[i].date() if hasattr( aligned_fast.index[i], 'date' ) else aligned_fast.index[i],
-                    'type': 'bullish'
-                };
-                # Set appropriate field names based on MA type
-                if ma_type == 'ema':
-                    crossover_data['fast_ema'] = curr_fast;
-                    crossover_data['slow_ema'] = curr_slow;
-                else:
-                    crossover_data['fast_sma'] = curr_fast;
-                    crossover_data['slow_sma'] = curr_slow;
-                crossovers.append( crossover_data );
+                    'type': 'bullish',
+                    'fast_ema': curr_fast,
+                    'slow_ema': curr_slow
+                });
             
             # Bearish crossover: fast crosses below slow  
             elif prev_fast >= prev_slow and curr_fast < curr_slow:
-                crossover_data = {
+                crossovers.append({
                     'date': aligned_fast.index[i].date() if hasattr( aligned_fast.index[i], 'date' ) else aligned_fast.index[i],
-                    'type': 'bearish'
-                };
-                # Set appropriate field names based on MA type
-                if ma_type == 'ema':
-                    crossover_data['fast_ema'] = curr_fast;
-                    crossover_data['slow_ema'] = curr_slow;
-                else:
-                    crossover_data['fast_sma'] = curr_fast;
-                    crossover_data['slow_sma'] = curr_slow;
-                crossovers.append( crossover_data );
+                    'type': 'bearish',
+                    'fast_ema': curr_fast,
+                    'slow_ema': curr_slow
+                });
         
         return crossovers;
     
@@ -370,11 +311,6 @@ def calculate_ema( prices: pd.Series, period: int ) -> pd.Series:
     """Calculate EMA with specified period"""
     calculator = TechnicalIndicators();
     return calculator.calculate_ema( prices, period );
-
-def calculate_sma( prices: pd.Series, period: int ) -> pd.Series:
-    """Calculate SMA with specified period"""
-    calculator = TechnicalIndicators();
-    return calculator.calculate_sma( prices, period );
 
 def detect_recent_rsi_crosses( rsi_series: pd.Series ) -> Dict[str, Optional[date]]:
     """Detect recent RSI crosses with default lookback"""

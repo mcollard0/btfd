@@ -116,6 +116,7 @@ A Python-based stock option backtesting platform with two primary operational mo
 - **Signal Detection**: Identify new crossovers since last trading day
 - **RSI Context Addition**: Flag recent RSI extremes with timing
 - **Ranking System**: Score signals by strength and confluence
+- **Filtering Criteria**: See `docs/stock_reporting_criteria.md` for comprehensive measurement details
 
 #### Output Formatting
 - **Email Format**: HTML table with signal details, charts
@@ -324,6 +325,7 @@ btfd/
 │   └── btfd.db                  # SQLite database (gitignored)
 ├── docs/
 │   ├── architecture.md          # This document
+│   ├── stock_reporting_criteria.md # Stock instrument reporting measurements and criteria
 │   └── api_documentation.md     # Code API docs
 ├── tests/
 │   ├── test_data_fetchers.py
@@ -409,11 +411,167 @@ btfd/
 
 ---
 
-## Next Steps
-1. Implement extended database schema with new tables
-2. Create basic data fetcher framework
-3. Build RSI and EMA calculation modules  
-4. Develop signal detection and caching system
-5. Begin optimization framework development
+## Development Environment Setup
 
-This architecture provides a solid foundation for both research (optimization) and production (daily scanning) use cases while maintaining security, scalability, and reliability.
+### Virtual Environment Usage
+**CRITICAL**: Always use the virtual environment when running BTFD components.
+
+```bash
+# Activate virtual environment
+cd /ARCHIVE/Programming/btfd
+source venv/bin/activate
+
+# Verify dependencies are available
+python -c "import yfinance, talib, pandas; print('Dependencies OK')"
+
+# Run scanner
+python src/daily_btfd_scanner.py
+```
+
+### Dependencies
+The system requires these key packages (installed in `./venv/`):
+- **yfinance**: Primary data source for stock prices
+- **TA-Lib**: Technical analysis calculations (RSI, EMA, SMA, MACD)
+- **pandas**: Data manipulation and analysis
+- **numpy**: Numerical computations
+- **requests**: API calls and HTTP requests
+- **sqlite3**: Database operations (built-in)
+
+### Running the System
+
+#### Daily EMA + SMA Scanner (Default)
+```bash
+source venv/bin/activate
+python src/daily_btfd_scanner.py
+```
+
+#### SMA-Only Scanner
+```bash
+source venv/bin/activate
+python run_sma_scanner.py --test-mode
+```
+
+#### Test Mode
+```bash
+source venv/bin/activate
+python src/daily_btfd_scanner.py --test-mode
+```
+
+---
+
+## Production Deployment Notes
+
+### Cron Job Setup
+For automated daily scanning, add to crontab:
+```bash
+# Run BTFD scanner at 9:30 AM EST (after market open)
+30 9 * * 1-5 cd /ARCHIVE/Programming/btfd && source venv/bin/activate && python src/daily_btfd_scanner.py
+
+# Run SMA scanner at 4:30 PM EST (after market close)
+30 16 * * 1-5 cd /ARCHIVE/Programming/btfd && source venv/bin/activate && python run_sma_scanner.py
+```
+
+### Database Location
+- **Path**: `/ARCHIVE/Programming/btfd/btfd/data/btfd.db`
+- **Backup**: Automatic timestamped backups in `./backups/` directory
+- **Schema**: See database schema section above
+
+### Configuration Files
+- **Settings**: `src/config/settings.py`
+- **API Keys**: Stored in database `api_keys` table
+- **Environment Variables**: `ALPHAVANTAGE_API_KEY` in `~/.bashrc`
+
+### Email Configuration
+Email notifications require SMTP configuration in the database:
+```sql
+INSERT INTO email_config (smtp_server, smtp_port, username, password, recipients)
+VALUES ('smtp.gmail.com', 587, 'your_email@gmail.com', 'app_password', 'recipient@example.com');
+```
+
+---
+
+## Signal Types and Scanning
+
+### Default Behavior (Both EMA + SMA)
+The system now scans for both signal types by default:
+- **EMA Signals**: Short-term crossovers (5-15 day periods)
+- **SMA Signals**: Long-term crossovers (SMA49/200 for early warning)
+
+### Signal Strength Scoring
+- **EMA Signals**: Base 50 + RSI context + price position + parameter responsiveness
+- **SMA Signals**: Base 60 (+10 for rarity) + RSI context + momentum confirmation
+
+### Lookback Periods
+- **EMA**: 5 days (configurable)
+- **SMA**: 14 days (configurable) 
+- **RSI Context**: 5 days for extreme crosses
+
+---
+
+## File Structure and Key Components
+
+### Core Scanner Files
+- `src/daily_btfd_scanner.py` - Main production scanner (EMA + SMA)
+- `run_sma_scanner.py` - SMA-only scanner
+- `src/scanner/daily_scanner.py` - Core scanning logic
+
+### Technical Analysis
+- `src/indicators/technical.py` - RSI, EMA, SMA calculations
+- `src/config/settings.py` - All configuration parameters
+
+### Data Management
+- `src/data/fetchers.py` - Yahoo Finance and Alpha Vantage integration
+- `btfd/data/btfd.db` - SQLite database
+
+### Notifications
+- `src/notifications/email_sender.py` - Email notifications
+- `src/notifications/motd_writer.py` - Terminal message updates
+
+---
+
+## Troubleshooting
+
+### Common Issues
+
+1. **ModuleNotFoundError**: Always activate venv first
+   ```bash
+   source venv/bin/activate
+   ```
+
+2. **API Rate Limits**: System automatically handles Alpha Vantage limits
+   - 5 calls per minute
+   - 500 calls per day
+   - Automatic fallback to Yahoo Finance
+
+3. **Database Locked**: SQLite connection issues
+   ```bash
+   # Check for hung processes
+   ps aux | grep python
+   ```
+
+4. **Missing Data**: Insufficient historical data for indicators
+   - SMA200 requires 200+ trading days
+   - RSI requires 14+ days
+   - System automatically handles with graceful degradation
+
+### Debug Mode
+```bash
+source venv/bin/activate
+python -c "from src.scanner.daily_scanner import *; scanner=DailySignalScanner(); print('Scanner initialized')"
+```
+
+---
+
+## Next Steps
+1. ✅ Virtual environment setup and dependency management
+2. ✅ EMA signal detection and optimization
+3. ✅ SMA49/200 early warning system
+4. ✅ Email notification system
+5. ✅ Database schema and caching
+6. [ ] Real-time monitoring and alerting
+7. [ ] Performance analytics and backtesting
+8. [ ] Web dashboard for signal visualization
+
+This architecture provides a production-ready foundation for both research (optimization) and production (daily scanning) use cases while maintaining security, scalability, and reliability.
+
+**Remember: Always use the virtual environment when running any BTFD components!**

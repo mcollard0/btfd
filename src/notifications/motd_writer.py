@@ -19,7 +19,7 @@ class MOTDWriter:
     
     def write_signals_to_motd( self, signals_text: str ) -> bool:
         """
-        Write signals to system MOTD (/etc/motd), replacing BTFD section daily
+        Write signals to user MOTD (~/.motd) with bashrc integration for reliable display
         
         Args:
             signals_text: Formatted signals text for MOTD
@@ -28,12 +28,20 @@ class MOTDWriter:
             True if written successfully, False otherwise
         """
         
-        # Try system MOTD with sudo if needed
+        # Primary: Write to user MOTD file
+        if self._write_user_motd( signals_text ):
+            # Ensure bashrc integration is set up
+            self._ensure_bashrc_integration();
+            print( f"✅ MOTD updated with signals in {self.user_motd}" );
+            return True;
+        
+        # Fallback: Try system MOTD with sudo if needed
+        print( "⚠️  User MOTD failed, trying system MOTD as fallback..." );
         if self._write_system_motd_with_sudo( signals_text ):
             print( "✅ MOTD updated with signals in /etc/motd" );
             return True;
         
-        print( "❌ Failed to update system MOTD - check permissions" );
+        print( "❌ Failed to update both user and system MOTD" );
         return False;
     
     def _write_system_motd_with_sudo( self, signals_text: str ) -> bool:
@@ -129,18 +137,17 @@ class MOTDWriter:
         """Write to user MOTD file (~/.motd)"""
         
         try:
-            # User MOTD files are typically sourced by shell profiles
-            wrapped_content = self._wrap_btfd_section( signals_text );
-            
+            # Write signals directly to user MOTD (no wrapping needed for user file)
             with open( self.user_motd, 'w' ) as f:
-                f.write( wrapped_content + "\n" );
+                f.write( signals_text.rstrip() + "\n" );
             
-            # Make executable so it can be sourced
-            self.user_motd.chmod( stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR );
+            # Make readable by user (no need for executable)
+            self.user_motd.chmod( stat.S_IRUSR | stat.S_IWUSR );
             
             return True;
             
         except (PermissionError, OSError) as e:
+            print( f"❌ Error writing user MOTD: {e}" );
             return False;
     
     def _write_btfd_motd( self, signals_text: str ) -> bool:
@@ -199,13 +206,8 @@ echo ""
 {signals_text.rstrip()}
 # === End BTFD Signals ===""";
     
-    def setup_bashrc_integration( self ) -> bool:
-        """
-        Setup .bashrc integration to show BTFD signals on login
-        
-        Returns:
-            True if setup successfully, False otherwise
-        """
+    def _ensure_bashrc_integration( self ) -> bool:
+        """Ensure .bashrc integration is set up (internal method)"""
         
         try:
             bashrc_path = Path.home() / ".bashrc";
@@ -218,16 +220,14 @@ echo ""
             
             # Check if BTFD integration already exists
             if "# BTFD Daily Signals Integration" in bashrc_content:
-                print( "ℹ️  BTFD .bashrc integration already exists" );
-                return True;
+                return True;  # Already set up
             
-            # Add BTFD integration
+            # Add BTFD integration to display ~/.motd
             btfd_integration = f"""
+
 # BTFD Daily Signals Integration
-if [ -f "{self.btfd_motd}" ]; then
-    echo ""
-    cat "{self.btfd_motd}"
-    echo ""
+if [ -f "{self.user_motd}" ]; then
+    cat "{self.user_motd}"
 fi
 """;
             
@@ -235,13 +235,20 @@ fi
             with open( bashrc_path, 'a' ) as f:
                 f.write( btfd_integration );
             
-            print( "✅ BTFD integration added to .bashrc" );
-            print( "ℹ️  Signals will appear on next login or run: source ~/.bashrc" );
+            print( f"✅ BTFD integration added to .bashrc (displays {self.user_motd})" );
             return True;
             
         except (PermissionError, OSError) as e:
-            print( f"❌ Error setting up .bashrc integration: {e}" );
+            print( f"⚠️  Warning: Could not set up .bashrc integration: {e}" );
             return False;
+    
+    def setup_bashrc_integration( self ) -> bool:
+        """Setup .bashrc integration to show BTFD signals on login (public method)
+        
+        Returns:
+            True if setup successfully, False otherwise
+        """
+        return self._ensure_bashrc_integration();
     
     def get_motd_status( self ) -> Dict[str, bool]:
         """Get status of different MOTD options"""
@@ -293,14 +300,14 @@ fi
             print( "ℹ️  .bashrc integration - Available (run setup_bashrc_integration)" );
         
         print( "\n📖 Setup Instructions:" );
-        print( "1. For system-wide MOTD: Run scanner with sudo" );
-        print( "2. For user MOTD: Scanner will auto-create ~/.motd" );
-        print( "3. For shell integration: Run setup_bashrc_integration()" );
-        print( "4. To view signals anytime: cat ~/.btfd_motd" );
+        print( "1. Primary: User MOTD (~/.motd) with bashrc integration (automatic)" );
+        print( "2. Fallback: System MOTD (/etc/motd) requires sudo permissions" );
+        print( "3. Manual setup: Run setup_bashrc_integration() if needed" );
+        print( "4. View signals: cat ~/.motd or login to new shell session" );
 
 # Convenience functions
 def write_signals_to_motd( signals_text: str ) -> bool:
-    """Write signals to MOTD with automatic fallback"""
+    """Write signals to user MOTD (~/.motd) with bashrc integration and system fallback"""
     
     writer = MOTDWriter();
     return writer.write_signals_to_motd( signals_text );
