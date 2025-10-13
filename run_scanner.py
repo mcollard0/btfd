@@ -18,10 +18,11 @@ from src.notifications.email_sender import EmailSender;
 from src.notifications.motd_writer import MOTDWriter;
 from src.visualization.signal_charts import create_signal_charts;
 from src.data.fetchers import DataManager;
+from src.data.stock_discovery import StockDiscovery;
 
 def ensure_fresh_data( symbols, min_days=210, days_back=320 ):
     """
-    Ensure we have fresh OHLC data for all symbols with at least min_days
+    Smart data gathering: only fetch missing data points from database
     
     Args:
         symbols: List of stock symbols
@@ -29,7 +30,7 @@ def ensure_fresh_data( symbols, min_days=210, days_back=320 ):
         days_back: Days back to fetch
     """
     
-    print( f"📥 Ensuring fresh data for {len( symbols )} symbols (min {min_days} days)..." );
+    print( f"📥 Smart data gathering for {len( symbols )} symbols (min {min_days} days)..." );
     
     data_manager = DataManager();
     end_date = date.today();
@@ -37,32 +38,49 @@ def ensure_fresh_data( symbols, min_days=210, days_back=320 ):
     
     success_count = 0;
     failed_symbols = [];
+    cached_count = 0;
+    fresh_count = 0;
     
     for i, symbol in enumerate( symbols ):
-        print( f"📊 [{i+1}/{len( symbols )}] Checking data for {symbol}..." );
+        print( f"📊 [{i+1}/{len( symbols )}] Analyzing data coverage for {symbol}..." );
         
         try:
-            # Force fresh download by setting use_cache=False initially
-            data = data_manager.get_stock_data( 
-                symbol, 
-                start_date, 
-                end_date, 
-                use_cache=False,  # Force fresh download
-                min_days=min_days 
-            );
+            # First check what we have in cache/database
+            cached_data = data_manager._get_cached_data( symbol, start_date, end_date );
             
-            if data is not None and len( data ) >= min_days:
-                print( f"   ✅ {symbol}: {len( data )} days available" );
+            if cached_data is not None and len( cached_data ) >= min_days:
+                print( f"   💾 {symbol}: {len( cached_data )} days cached - USING EXISTING DATA" );
                 success_count += 1;
+                cached_count += 1;
             else:
-                print( f"   ❌ {symbol}: Insufficient data ({len( data ) if data is not None else 0}/{min_days} days)" );
-                failed_symbols.append( symbol );
+                # Need to fetch fresh data
+                existing_days = len( cached_data ) if cached_data is not None else 0;
+                print( f"   💾 {symbol}: Only {existing_days}/{min_days} days cached - FETCHING FRESH DATA" );
+                
+                data = data_manager.get_stock_data( 
+                    symbol, 
+                    start_date, 
+                    end_date, 
+                    use_cache=False,  # Force fresh download to fill gaps
+                    min_days=min_days 
+                );
+                
+                if data is not None and len( data ) >= min_days:
+                    print( f"   ✅ {symbol}: {len( data )} days now available (FRESH DOWNLOAD)" );
+                    success_count += 1;
+                    fresh_count += 1;
+                else:
+                    print( f"   ❌ {symbol}: Still insufficient data ({len( data ) if data is not None else 0}/{min_days} days)" );
+                    failed_symbols.append( symbol );
+                    
         except Exception as e:
             print( f"   💥 {symbol}: Error fetching data - {e}" );
             failed_symbols.append( symbol );
     
-    print( f"\n📊 Data Summary:" );
-    print( f"   ✅ Success: {success_count}/{len( symbols )} symbols" );
+    print( f"\n📊 Smart Data Gathering Summary:" );
+    print( f"   ✅ Total Success: {success_count}/{len( symbols )} symbols" );
+    print( f"   💾 Used Cached: {cached_count} symbols (no download needed)" );
+    print( f"   📶 Fresh Downloads: {fresh_count} symbols (new data fetched)" );
     print( f"   ❌ Failed: {len( failed_symbols )} symbols" );
     
     if failed_symbols:
@@ -70,51 +88,69 @@ def ensure_fresh_data( symbols, min_days=210, days_back=320 ):
     
     return [s for s in symbols if s not in failed_symbols];
 
-def get_affordable_stocks( max_price=100.0 ):
-    """Get list of stocks under the specified price"""
+def get_affordable_stocks( max_price=100.0, use_comprehensive=True ):
+    """Get list of stocks under the specified price using comprehensive discovery"""
     
-    print( f"🔍 Finding stocks under ${max_price}..." );
+    print( f"🔍 Finding stocks under ${max_price} {'(COMPREHENSIVE DISCOVERY)' if use_comprehensive else '(LEGACY MODE)'}..." );
     
-    # Expanded list of popular stocks likely to be under $100
-    candidate_symbols = [
-        # Original list
-        'KO', 'PEP', 'INTC', 'F', 'GE', 'BAC', 'WFC', 'T', 'VZ',
-        'PYPL', 'UBER', 'LYFT', 'NKE', 'MCD', 'SBUX', 'WMT', 'TGT',
+    if use_comprehensive:
+        # Use comprehensive stock discovery
+        discoverer = StockDiscovery();
+        symbols = discoverer.discover_affordable_stocks( 
+            max_price=max_price,
+            min_volume=10000,   # Lower volume requirement for broader coverage
+            min_market_cap=1000000,  # Lower $1M minimum market cap for broader coverage
+            use_cache=True,
+            max_cache_age_hours=24,  # Refresh daily for comprehensive coverage
+            max_stocks_to_check=0  # NO LIMIT - check ALL stocks
+        );
         
-        # Additional affordable stocks
-        'C', 'JPM', 'GS', 'MS', 'USB', 'PNC', 'TFC', 'COF',  # Banks
-        'XOM', 'CVX', 'BP', 'SHEL', 'COP', 'OXY',  # Energy
-        'PFE', 'JNJ', 'MRK', 'ABT', 'BMY', 'LLY',  # Healthcare
-        'HD', 'LOW', 'COST', 'WMT', 'TJX', 'DG',  # Retail
-        'CSCO', 'IBM', 'HPQ', 'ORCL',  # Tech (older/cheaper)
-        'CAT', 'DE', 'MMM', 'HON', 'RTX', 'LMT',  # Industrials
-        'SO', 'NEE', 'DUK', 'EXC', 'AEP',  # Utilities
-        'REIT', 'O', 'SPG', 'PLD', 'AMT',  # REITs
-        'GOLD', 'NEM', 'FCX', 'AA',  # Materials
-        'AFL', 'AIG', 'PRU', 'MET'  # Insurance
-    ];
+        print( f"🎯 COMPREHENSIVE DISCOVERY: Found {len( symbols )} affordable stocks!" );
+        return symbols;
     
-    data_manager = DataManager();
-    suitable_symbols = [];
-    
-    for i, symbol in enumerate( candidate_symbols ):
-        try:
-            print( f"   [{i+1}/{len( candidate_symbols )}] Checking {symbol}..." );
-            current_price = data_manager.yahoo_fetcher.get_current_price( symbol );
+    else:
+        # Legacy hardcoded method (fallback)
+        print( "⚠️  Using legacy hardcoded stock list as fallback..." );
+        
+        candidate_symbols = [
+            # Original list
+            'KO', 'PEP', 'INTC', 'F', 'GE', 'BAC', 'WFC', 'T', 'VZ',
+            'PYPL', 'UBER', 'LYFT', 'NKE', 'MCD', 'SBUX', 'WMT', 'TGT',
             
-            if current_price and current_price <= max_price:
-                suitable_symbols.append( symbol );
-                print( f"      ✅ ${current_price:.2f} - INCLUDED" );
-            elif current_price:
-                print( f"      ❌ ${current_price:.2f} - TOO EXPENSIVE" );
-            else:
-                print( f"      ⚠️  No price data" );
+            # Additional affordable stocks
+            'C', 'JPM', 'GS', 'MS', 'USB', 'PNC', 'TFC', 'COF',  # Banks
+            'XOM', 'CVX', 'BP', 'SHEL', 'COP', 'OXY',  # Energy
+            'PFE', 'JNJ', 'MRK', 'ABT', 'BMY', 'LLY',  # Healthcare
+            'HD', 'LOW', 'COST', 'WMT', 'TJX', 'DG',  # Retail
+            'CSCO', 'IBM', 'HPQ', 'ORCL',  # Tech (older/cheaper)
+            'CAT', 'DE', 'MMM', 'HON', 'RTX', 'LMT',  # Industrials
+            'SO', 'NEE', 'DUK', 'EXC', 'AEP',  # Utilities
+            'REIT', 'O', 'SPG', 'PLD', 'AMT',  # REITs
+            'GOLD', 'NEM', 'FCX', 'AA',  # Materials
+            'AFL', 'AIG', 'PRU', 'MET'  # Insurance
+        ];
+        
+        data_manager = DataManager();
+        suitable_symbols = [];
+        
+        for i, symbol in enumerate( candidate_symbols ):
+            try:
+                print( f"   [{i+1}/{len( candidate_symbols )}] Checking {symbol}..." );
+                current_price = data_manager.yahoo_fetcher.get_current_price( symbol );
                 
-        except Exception as e:
-            print( f"      💥 Error: {e}" );
-    
-    print( f"\n🎯 Found {len( suitable_symbols )} affordable stocks: {suitable_symbols}" );
-    return suitable_symbols;
+                if current_price and current_price <= max_price:
+                    suitable_symbols.append( symbol );
+                    print( f"      ✅ ${current_price:.2f} - INCLUDED" );
+                elif current_price:
+                    print( f"      ❌ ${current_price:.2f} - TOO EXPENSIVE" );
+                else:
+                    print( f"      ⚠️  No price data" );
+                    
+            except Exception as e:
+                print( f"      💥 Error: {e}" );
+        
+        print( f"\n🎯 Found {len( suitable_symbols )} affordable stocks: {suitable_symbols}" );
+        return suitable_symbols;
 
 def main():
     """Main scanner function"""
@@ -128,6 +164,8 @@ def main():
     parser.add_argument( '--no-motd', action='store_true', help='Skip MOTD update' );
     parser.add_argument( '--no-db', action='store_true', help='Skip database save' );
     parser.add_argument( '--symbols', nargs='+', help='Specific symbols to scan' );
+    parser.add_argument( '--legacy-discovery', action='store_true', help='Use legacy hardcoded stock list instead of comprehensive discovery' );
+    parser.add_argument( '--market-overview', action='store_true', help='Show market overview and exit' );
     
     args = parser.parse_args();
     
@@ -137,13 +175,42 @@ def main():
     print( f"📊 Max signals: {args.max_signals}" );
     print( "=" * 60 );
     
+    # Handle market overview request
+    if args.market_overview:
+        print( f"\n🌍 MARKET OVERVIEW ANALYSIS" );
+        print( "=" * 40 );
+        
+        from src.data.stock_discovery import get_market_overview;
+        overview = get_market_overview();
+        
+        if 'error' in overview:
+            print( f"❌ {overview['error']}" );
+            return 1;
+        
+        print( f"📊 Total stocks discovered: {overview['total_discovered']:,}" );
+        print( f"📈 Sample analyzed: {overview['sample_analyzed']:,}" );
+        print( f"📊 Estimated under $100: {overview['estimated_under_100']:,}" );
+        
+        dist = overview['price_distribution'];
+        print( f"\n💰 Price Distribution (sample):" );
+        print( f"   💎 Under $10:  {dist['under_10']:3d} ({dist['under_10']/overview['sample_analyzed']*100:.1f}%)" );
+        print( f"   💵 $10-$25:   {dist['under_25']:3d} ({dist['under_25']/overview['sample_analyzed']*100:.1f}%)" );
+        print( f"   💸 $25-$50:   {dist['under_50']:3d} ({dist['under_50']/overview['sample_analyzed']*100:.1f}%)" );
+        print( f"   💰 $50-$100:  {dist['under_100']:3d} ({dist['under_100']/overview['sample_analyzed']*100:.1f}%)" );
+        print( f"   🚀 Over $100:  {dist['over_100']:3d} ({dist['over_100']/overview['sample_analyzed']*100:.1f}%)" );
+        print( f"   ❓ No price:   {dist['no_price']:3d} ({dist['no_price']/overview['sample_analyzed']*100:.1f}%)" );
+        
+        print( f"\n🎯 CONCLUSION: ~{overview['estimated_under_100']:,} stocks are under $100 (vs. our previous 37)" );
+        return 0;
+    
     try:
         # Step 1: Get symbols to scan
         if args.symbols:
             symbols = args.symbols;
             print( f"📋 Using specified symbols: {symbols}" );
         else:
-            symbols = get_affordable_stocks( args.max_price );
+            use_comprehensive = not args.legacy_discovery;
+            symbols = get_affordable_stocks( args.max_price, use_comprehensive );
         
         if not symbols:
             print( "❌ No suitable symbols found to scan" );
