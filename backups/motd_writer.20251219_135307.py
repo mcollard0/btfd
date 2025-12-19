@@ -212,10 +212,10 @@ echo ""
         try:
             bashrc_path = Path.home() / ".bashrc";
             
-            # Read existing .bashrc (handle emoji/unicode with errors='replace')
+            # Read existing .bashrc
             bashrc_content = "";
             if bashrc_path.exists():
-                with open( bashrc_path, 'r', encoding='utf-8', errors='replace' ) as f:
+                with open( bashrc_path, 'r' ) as f:
                     bashrc_content = f.read();
             
             # Check if BTFD integration already exists
@@ -264,7 +264,7 @@ fi
         bashrc_path = Path.home() / ".bashrc";
         if bashrc_path.exists():
             try:
-                with open( bashrc_path, 'r', encoding='utf-8', errors='replace' ) as f:
+                with open( bashrc_path, 'r' ) as f:
                     status['bashrc_integrated'] = "BTFD Daily Signals Integration" in f.read();
             except:
                 pass;
